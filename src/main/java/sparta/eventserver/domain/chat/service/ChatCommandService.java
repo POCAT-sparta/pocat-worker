@@ -1,6 +1,7 @@
 package sparta.eventserver.domain.chat.service;
 
 import lombok.RequiredArgsConstructor;
+import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -13,12 +14,16 @@ import sparta.eventserver.domain.chat.entity.ChatMessage;
 import sparta.eventserver.domain.chat.entity.enums.ChatStatus;
 import sparta.eventserver.domain.chat.repository.ChatMessageRepository;
 import sparta.eventserver.domain.chat.repository.ChatRepository;
+import sparta.eventserver.domain.notification.dto.event.NotificationSendEvent;
+import sparta.eventserver.domain.notification.enums.NotificationType;
 import sparta.eventserver.domain.tradepost.entity.TradePost;
 import sparta.eventserver.domain.tradepost.repository.TradePostRepository;
 import sparta.eventserver.domain.user.entity.User;
 import sparta.eventserver.domain.user.repository.UserRepository;
 import sparta.eventserver.global.exception.ChatException;
 import sparta.eventserver.global.exception.ErrorCode;
+
+import java.util.Map;
 
 @Service
 @RequiredArgsConstructor
@@ -29,6 +34,7 @@ public class ChatCommandService {
     private final ChatMessageRepository chatMessageRepository;
     private final TradePostRepository tradePostRepository;
     private final UserRepository userRepository;
+    private final ApplicationEventPublisher eventPublisher;
 
 
     public ChatResponse createChat(Long guestId, CreateChatRequest request) {
@@ -49,14 +55,21 @@ public class ChatCommandService {
                 .status(ChatStatus.ACTIVE)
                 .build();
         try {
-            return ChatResponse.from(chatRepository.save(chat));
+            Chat saved = chatRepository.save(chat);
+            eventPublisher.publishEvent(new NotificationSendEvent(
+                    post.getUserId(),
+                    NotificationType.CHAT_ROOM_CREATED,
+                    "새로운 채팅방이 생성되었습니다.",
+                    Map.of("chatId", saved.getId())
+            ));
+            return ChatResponse.from(saved);
         } catch (DataIntegrityViolationException e) {
             throw new ChatException(ErrorCode.CHAT_ALREADY_EXISTS);
         }
     }
 
     public ChatMessagePublishDto sendMessage(Long chatId, Long senderId, String message) {
-        chatRepository.findByIdAndParticipant(chatId, senderId)
+        Chat chat = chatRepository.findByIdAndParticipant(chatId, senderId)
                 .orElseThrow(() -> new ChatException(ErrorCode.CHAT_FORBIDDEN));
 
 //        badWordFilterService.validate(message);
@@ -70,6 +83,14 @@ public class ChatCommandService {
                 .message(message)
                 .isRead(false)
                 .build());
+
+        Long receiverId = chat.getOwnerId().equals(senderId) ? chat.getGuestId() : chat.getOwnerId();
+        eventPublisher.publishEvent(new NotificationSendEvent(
+                receiverId,
+                NotificationType.CHAT_MESSAGE_RECEIVED,
+                sender.getNickname() + "님이 메시지를 보냈습니다.",
+                Map.of("chatId", chatId)
+        ));
 
         return new ChatMessagePublishDto(
                 ChatEventType.MESSAGE,

@@ -33,4 +33,15 @@ public class Notification extends BaseEntity {
     // 관련 데이터 (auctionId, orderUid 등 JSON으로 저장)
     @Column(name = "related_data")
     private String relatedData;
+
+    public static Notification create(Long userId, NotificationType type,
+                                        String message, String relatedData) {
+        return Notification.builder()
+                .userId(userId)
+                .type(type)
+                .message(message)
+                .isRead(false)
+                .relatedData(relatedData)
+                .build();
+    }
 }
